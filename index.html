@@ -534,7 +534,11 @@
         <button id="ttsToggle" class="toggle-btn on">開啟</button>
       </div>
       <div class="setting-row">
-        <span>語音選擇</span>
+        <span>AI 複製聲音</span>
+        <button id="aiVoiceToggle" class="toggle-btn">關閉</button>
+      </div>
+      <div class="setting-row" id="webVoiceRow">
+        <span>系統語音</span>
         <select id="voiceSel" class="voice-sel"><option>載入中…</option></select>
       </div>
       <div class="setting-row">
@@ -1211,8 +1215,92 @@
     }
   }
 
-  function speak(t){
-    if(!ttsOn || !("speechSynthesis" in window)) return;
+  /* ---- AI 複製聲音（arcar /voice，沿用阿公方案） ---- */
+  var VOICE_API="https://arcar.kftseng2oo1.workers.dev/voice";
+  var aiVoice=get("useAiVoice",false);
+  var aiVoiceId=get("aiVoiceId",null);
+  var sayAudio=null, sayUrl=null, _ttsDb=null;
+  var SILENT="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
+  function openTtsDb(cb){
+    if(_ttsDb){ cb(_ttsDb); return; }
+    try{
+      var req=indexedDB.open("dharmakayaTTS",1);
+      req.onupgradeneeded=function(e){ e.target.result.createObjectStore("audio",{keyPath:"k"}); };
+      req.onsuccess=function(){ _ttsDb=req.result; cb(_ttsDb); };
+      req.onerror=function(){ cb(null); };
+    }catch(e){ cb(null); }
+  }
+  function cacheGet(k,cb){
+    openTtsDb(function(db){
+      if(!db){ cb(null); return; }
+      try{
+        var q=db.transaction("audio","readonly").objectStore("audio").get(k);
+        q.onsuccess=function(){ cb(q.result?q.result.buf:null); };
+        q.onerror=function(){ cb(null); };
+      }catch(e){ cb(null); }
+    });
+  }
+  function cachePut(k,buf){
+    openTtsDb(function(db){
+      if(!db) return;
+      try{ db.transaction("audio","readwrite").objectStore("audio").put({k:k,buf:buf}); }catch(e){}
+    });
+  }
+  function unlockAudio(){
+    if(!sayAudio) sayAudio=new Audio();
+    try{
+      if(sayUrl){ URL.revokeObjectURL(sayUrl); sayUrl=null; }
+      sayAudio.src=SILENT;
+      var p=sayAudio.play();
+      if(p && p["catch"]) p["catch"](function(){});
+    }catch(e){}
+  }
+  function playBuf(buf){
+    try{
+      if(!sayAudio) sayAudio=new Audio();
+      if(sayUrl){ URL.revokeObjectURL(sayUrl); }
+      sayUrl=URL.createObjectURL(new Blob([buf],{type:"audio/mpeg"}));
+      sayAudio.src=sayUrl;
+      sayAudio.playbackRate=rate;
+      var p=sayAudio.play();
+      if(p && p["catch"]) p["catch"](function(){});
+    }catch(e){}
+  }
+  function stopAiAudio(){
+    try{ if(sayAudio){ sayAudio.pause(); } }catch(e){}
+    if(sayUrl){ try{ URL.revokeObjectURL(sayUrl); }catch(e){} sayUrl=null; }
+  }
+  function fetchDefaultVoiceId(cb){
+    fetch(VOICE_API+"/default-get",{
+      method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"
+    }).then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d && d.voice_id){
+        aiVoiceId=d.voice_id; set("aiVoiceId",aiVoiceId);
+        if(cb) cb(null,aiVoiceId); else toast("已載入 AI 聲音");
+      }else{
+        if(cb) cb(new Error("arcar 未設定預設聲音"));
+        else toast("arcar 尚未設定 AI 聲音");
+      }
+    })["catch"](function(e){
+      if(cb) cb(e); else toast("聲音服務連線失敗");
+    });
+  }
+
+  $("aiVoiceToggle").textContent=aiVoice?"開啟":"關閉";
+  $("aiVoiceToggle").className=aiVoice?"toggle-btn on":"toggle-btn";
+  $("webVoiceRow").style.display=aiVoice?"none":"";
+  $("aiVoiceToggle").onclick=function(){
+    aiVoice=!aiVoice; set("useAiVoice",aiVoice);
+    this.textContent=aiVoice?"開啟":"關閉";
+    this.className=aiVoice?"toggle-btn on":"toggle-btn";
+    $("webVoiceRow").style.display=aiVoice?"none":"";
+    if(aiVoice && !aiVoiceId){ fetchDefaultVoiceId(); }
+  };
+
+  function webSpeak(t){
+    if(!("speechSynthesis" in window)) return;
     try{ window.speechSynthesis.cancel();
       var u=new SpeechSynthesisUtterance(t);
       u.lang="zh-TW"; u.rate=rate;
@@ -1221,6 +1309,31 @@
       }
       window.speechSynthesis.speak(u);
     }catch(e){}
+  }
+  function aiSpeak(t){
+    if(!aiVoiceId){
+      fetchDefaultVoiceId(function(err){
+        if(err){ webSpeak(t); return; }
+        aiSpeak(t);
+      });
+      return;
+    }
+    var k=aiVoiceId+"|"+t;
+    cacheGet(k,function(hit){
+      if(hit){ playBuf(hit); return; }
+      fetch(VOICE_API+"/tts",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({voice_id:aiVoiceId, text:t})
+      }).then(function(r){
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return r.arrayBuffer();
+      }).then(function(buf){ cachePut(k,buf); playBuf(buf); })
+      ["catch"](function(e){ webSpeak(t); });
+    });
+  }
+  function speak(t){
+    if(!ttsOn) return;
+    if(aiVoice){ aiSpeak(t); } else { webSpeak(t); }
   }
 
   /* 引導語編輯 */
@@ -1267,6 +1380,7 @@
   function stopSense(){
     playing=false; clearTimeout(playTimer);
     try{ window.speechSynthesis.cancel(); }catch(e){}
+    stopAiAudio();
     $("ringNum").textContent="–"; setRing(0); $("silenceNote").textContent="";
     $("phaseLabel").textContent="準備";
     if(curSense){ $("stepInstr").textContent="已停止・可重新開始或另選對象"; }
@@ -1326,6 +1440,7 @@
       startDuizan(function(){ /* 對看完成後不自動播放，由使用者再按開始 */ });
       return;
     }
+    unlockAudio(); // iOS：在使用者手勢內先解鎖 Audio 元素，AI 聲音才能播
     playing=true;
     acquireWake();
     runSteps(0);
@@ -1587,7 +1702,8 @@
       var keys=["logs","gazeTotal","senseProg","senseRounds","gazeImg",
         "sageHistory","senseEdits","auraImgData",
         "auraPos","auraSize","auraColor","auraNotch","auraNotchDeg","auraDens",
-        "browPos","silSec","ttsOn","ttsRate","voiceURI"];
+        "browPos","silSec","ttsOn","ttsRate","voiceURI","useAiVoice","aiVoiceId"];
+      try{ indexedDB.deleteDatabase("dharmakayaTTS"); }catch(e){}
       for(var i=0;i<keys.length;i++){ LS.removeItem(keys[i]); }
       gazeSec=0; sageHistory=[];
       renderGazeTimer(); renderLog(); renderStats(); drawRadar(); renderSage();
@@ -1603,6 +1719,8 @@
 
   /* 初始化 */
   renderGazeTimer(); renderLog(); drawRadar(); renderDuizan();
+  // 已啟用 AI 聲音但尚未取到 voice_id → 背景抓一次
+  if(aiVoice && !aiVoiceId){ fetchDefaultVoiceId(function(){}); }
 })();
 </script>
 </body>
