@@ -1013,11 +1013,15 @@
 
   // 定位圓光（拖曳）
   var auraAiming=false, auraDragging=false;
+  // 雙指旋轉狀態
+  var rotStartAngle=0, rotBaseDeg=180, rotating=false;
   $("auraAimBtn").onclick=function(){
     auraAiming=!auraAiming;
-    if(auraAiming){ auraStage.className="aura-stage aiming"; $("auraHint").className="aura-hint show"; this.textContent="完成定位"; toast("拖曳調整圓光位置"); }
+    if(auraAiming){ auraStage.className="aura-stage aiming"; $("auraHint").className="aura-hint show"; this.textContent="完成定位"; toast("單指移動・雙指旋轉"); }
     else{ auraStage.className="aura-stage"; $("auraHint").className="aura-hint"; this.textContent="定位圓光"; toast("圓光位置已儲存"); }
   };
+  // 更新 hint 文字
+  $("auraHint").textContent="單指移動・雙指旋轉缺口";
   function moveAuraTo(cx,cy){
     var rect=auraStage.getBoundingClientRect();
     var x=(cx-rect.left)/rect.width*100, y=(cy-rect.top)/rect.height*100;
@@ -1027,9 +1031,50 @@
     auraRays.style.left=x+"%"; auraRays.style.top=y+"%";
     set("auraPos",{x:Math.round(x*10)/10,y:Math.round(y*10)/10});
   }
-  function auraDown(e){ if(!auraAiming) return; auraDragging=true; var t=e.touches?e.touches[0]:e; moveAuraTo(t.clientX,t.clientY); if(e.cancelable)e.preventDefault(); }
-  function auraMove(e){ if(!auraAiming||!auraDragging) return; var t=e.touches?e.touches[0]:e; moveAuraTo(t.clientX,t.clientY); if(e.cancelable)e.preventDefault(); }
-  function auraUp(){ auraDragging=false; }
+  function twoFingerAngle(touches){
+    var dx=touches[1].clientX-touches[0].clientX;
+    var dy=touches[1].clientY-touches[0].clientY;
+    return Math.atan2(dy,dx)*180/Math.PI;
+  }
+  function auraDown(e){
+    if(!auraAiming) return;
+    if(e.touches && e.touches.length===2){
+      // 進入雙指旋轉模式
+      rotating=true; auraDragging=false;
+      rotStartAngle=twoFingerAngle(e.touches);
+      rotBaseDeg=notchDeg;
+      if(e.cancelable) e.preventDefault();
+      return;
+    }
+    auraDragging=true; rotating=false;
+    var t=e.touches?e.touches[0]:e;
+    moveAuraTo(t.clientX,t.clientY);
+    if(e.cancelable) e.preventDefault();
+  }
+  function auraMove(e){
+    if(!auraAiming) return;
+    // 雙指旋轉優先
+    if(e.touches && e.touches.length===2){
+      if(!rotating){
+        rotating=true; auraDragging=false;
+        rotStartAngle=twoFingerAngle(e.touches); rotBaseDeg=notchDeg;
+      }
+      var delta=twoFingerAngle(e.touches)-rotStartAngle;
+      notchDeg=(((rotBaseDeg+delta)%360)+360)%360;
+      set("auraNotchDeg",notchDeg); applyNotch();
+      if(e.cancelable) e.preventDefault();
+      return;
+    }
+    if(!auraDragging) return;
+    var t=e.touches?e.touches[0]:e;
+    moveAuraTo(t.clientX,t.clientY);
+    if(e.cancelable) e.preventDefault();
+  }
+  function auraUp(e){
+    auraDragging=false;
+    if(e && e.touches && e.touches.length<2) rotating=false;
+    if(!e || !e.touches) rotating=false;
+  }
   auraStage.addEventListener("touchstart",auraDown,{passive:false});
   auraStage.addEventListener("touchmove",auraMove,{passive:false});
   auraStage.addEventListener("touchend",auraUp);
