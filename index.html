@@ -1183,31 +1183,36 @@
   function loadVoices(){
     if(!("speechSynthesis" in window)) return;
     voices=window.speechSynthesis.getVoices();
-    // 篩選繁中/台語/中文類語音，優先排序
-    var zhVoices=[], others=[];
+    // 只保留中文類語音（zh / cmn / yue / nan）
+    // iOS 冷門語言的語音多為 compact 版，未下載時用了會靜音，直接過濾
+    var zhVoices=[];
     for(var i=0;i<voices.length;i++){
       var v=voices[i], lang=(v.lang||"").toLowerCase();
-      if(lang.indexOf("zh")>=0 || lang.indexOf("cmn")>=0 || lang.indexOf("yue")>=0 || lang.indexOf("nan")>=0){ zhVoices.push(v); }
-      else others.push(v);
+      if(lang.indexOf("zh")>=0 || lang.indexOf("cmn")>=0 || lang.indexOf("yue")>=0 || lang.indexOf("nan")>=0){
+        zhVoices.push(v);
+      }
     }
     // 繁中（TW / HK）排前面
     zhVoices.sort(function(a,b){
-      var at=/tw|hk|hant|hans/i.test(a.lang)?0:1;
-      var bt=/tw|hk|hant|hans/i.test(b.lang)?0:1;
+      var at=/tw|hk|hant/i.test(a.lang)?0:1;
+      var bt=/tw|hk|hant/i.test(b.lang)?0:1;
       return at-bt;
     });
     var sel=$("voiceSel");
     sel.innerHTML="";
-    var opt0=document.createElement("option"); opt0.value=""; opt0.textContent="（系統預設）"; sel.appendChild(opt0);
-    var all=zhVoices.concat(others);
-    for(var j=0;j<all.length;j++){
+    var opt0=document.createElement("option"); opt0.value=""; opt0.textContent="（系統預設繁中）"; sel.appendChild(opt0);
+    for(var j=0;j<zhVoices.length;j++){
       var o=document.createElement("option");
-      o.value=all[j].voiceURI; o.textContent=all[j].name+"（"+all[j].lang+"）";
-      if(all[j].voiceURI===voiceURI) o.selected=true;
+      o.value=zhVoices[j].voiceURI; o.textContent=zhVoices[j].name+"（"+zhVoices[j].lang+"）";
+      if(zhVoices[j].voiceURI===voiceURI) o.selected=true;
       sel.appendChild(o);
     }
   }
-  $("voiceSel").onchange=function(){ voiceURI=this.value; set("voiceURI",voiceURI); };
+  $("voiceSel").onchange=function(){
+    voiceURI=this.value; set("voiceURI",voiceURI);
+    // 立即試聽
+    unlockAudio(); webSpeak("法身實相・以無住為本");
+  };
   if("speechSynthesis" in window){
     loadVoices();
     if(window.speechSynthesis.onvoiceschanged !== undefined){
